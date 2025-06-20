@@ -25,6 +25,10 @@ type AnalysisResult struct {
 	HasLoginForm              bool
 }
 
+var loginKeywords = []string{
+	"login", "sign in", "log in", "auth", "access", "anmelden", "connexion",
+}
+
 func main() {
 	r := gin.Default()
 	r.SetFuncMap(template.FuncMap{
@@ -85,20 +89,7 @@ func AnalyzeURL(targetURL string) (*AnalysisResult, int, error) {
 	}
 	bodyStr := string(bodyBytes)
 
-	htmlVersion := "Unknown"
-	doctypeRE := regexp.MustCompile(`(?is)<!DOCTYPE\s+([a-zA-Z0-9 \/\.\-]*)>`)
-	doctype := doctypeRE.FindString(bodyStr)
-	if doctype != "" {
-		if strings.Contains(strings.ToLower(doctype), "xhtml") {
-			htmlVersion = "XHTML"
-		} else if strings.Contains(strings.ToLower(doctype), "html 4.01") {
-			htmlVersion = "HTML 4.01"
-		} else if strings.ToLower(strings.TrimSpace(doctype)) == "<!doctype html>" {
-			htmlVersion = "HTML5"
-		} else if strings.Contains(strings.ToLower(doctype), "html") {
-			htmlVersion = "HTML"
-		}
-	}
+	htmlVersion := detectHTMLVersion(bodyStr)
 
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(bodyStr))
 	if err != nil {
@@ -154,7 +145,7 @@ func AnalyzeURL(targetURL string) (*AnalysisResult, int, error) {
 
 	hasLogin := false
 	doc.Find("form").EachWithBreak(func(i int, s *goquery.Selection) bool {
-		if s.Find("input[type='password']").Length() > 0 {
+		if isLoginForm(s) {
 			hasLogin = true
 			return false
 		}
@@ -195,4 +186,97 @@ func isLinkAccessible(link string) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 400
+}
+
+func containsLoginKeyword(s string) bool {
+	s = strings.ToLower(s)
+	for _, kw := range loginKeywords {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func detectHTMLVersion(rawHTML string) string {
+	doctypeRe := regexp.MustCompile(`(?is)<!DOCTYPE\s+([^>]+)>`)
+	match := doctypeRe.FindStringSubmatch(rawHTML)
+	if len(match) < 2 {
+		return "Unknown"
+	}
+	doctype := strings.ToLower(match[1])
+
+	switch {
+	case strings.TrimSpace(doctype) == "html":
+		return "HTML5"
+	case strings.HasPrefix(doctype, "html public \"-//w3c//dtd html 4.01 strict"):
+		return "HTML 4.01 Strict"
+	case strings.HasPrefix(doctype, "html public \"-//w3c//dtd html 4.01 transitional"):
+		return "HTML 4.01 Transitional"
+	case strings.HasPrefix(doctype, "html public \"-//w3c//dtd html 4.01 frameset"):
+		return "HTML 4.01 Frameset"
+	case strings.HasPrefix(doctype, "html public \"-//w3c//dtd html 4.0"):
+		return "HTML 4.0"
+	case strings.HasPrefix(doctype, "html public \"-//w3c//dtd html 3.2"):
+		return "HTML 3.2"
+	case strings.HasPrefix(doctype, "html public \"-//w3c//dtd html 2.0"):
+		return "HTML 2.0"
+	case strings.HasPrefix(doctype, "xhtml 1.0 strict"):
+		return "XHTML 1.0 Strict"
+	case strings.HasPrefix(doctype, "xhtml 1.0 transitional"):
+		return "XHTML 1.0 Transitional"
+	case strings.HasPrefix(doctype, "xhtml 1.0 frameset"):
+		return "XHTML 1.0 Frameset"
+	case strings.HasPrefix(doctype, "xhtml 1.1"):
+		return "XHTML 1.1"
+	case strings.Contains(doctype, "xhtml"):
+		return "XHTML (unknown version)"
+	case strings.Contains(doctype, "html"):
+		return "Legacy HTML"
+	default:
+		return "Unknown/Custom"
+	}
+}
+
+func isLoginForm(form *goquery.Selection) bool {
+	if form.Find(`input[type="password"]`).Length() == 0 {
+		return false
+	}
+
+	if action, exists := form.Attr("action"); exists && containsLoginKeyword(action) {
+		return true
+	}
+
+	submitFound := false
+	form.Find(`input[type="submit"], button[type="submit"], button`).EachWithBreak(func(i int, s *goquery.Selection) bool {
+		val, _ := s.Attr("value")
+		btnText := strings.ToLower(val + " " + s.Text())
+		if containsLoginKeyword(btnText) {
+			submitFound = true
+			return false
+		}
+		return true
+	})
+	if submitFound {
+		return true
+	}
+
+	loginFieldFound := false
+	form.Find("input, label").EachWithBreak(func(i int, s *goquery.Selection) bool {
+		for _, attr := range []string{"placeholder", "aria-label", "name", "id"} {
+			val, ok := s.Attr(attr)
+			if ok && containsLoginKeyword(val) {
+				loginFieldFound = true
+				return false
+			}
+		}
+
+		if containsLoginKeyword(s.Text()) {
+			loginFieldFound = true
+			return false
+		}
+		return true
+	})
+
+	return loginFieldFound
 }
