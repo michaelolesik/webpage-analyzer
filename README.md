@@ -7,11 +7,11 @@
 
 **Clone and run:**
 
-git clone (https://github.com/michaelolesik/webpage-analyzer
-cd webpage-analyzer
-go mod tidy
-go run main.go
-Visit http://localhost:8080 in your browser.
+- git clone (https://github.com/michaelolesik/webpage-analyzer
+- cd webpage-analyzer
+- go mod tidy
+- go run main.go
+- Visit http://localhost:8080 in your browser.
 
 ## 2. Assumptions & Decisions
 
